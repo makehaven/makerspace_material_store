@@ -1,10 +1,11 @@
 name: 'Makerspace Material Store'
 type: module
 description: 'Manages store transactions, member tabs, and PayPal integration.'
-package: Custom
+package: Makerspace
 core_version_requirement: ^10 || ^11
 dependencies:
   - drupal:node
   - eck:eck
   - drupal:user
   - paypal_inventory_listener:paypal_inventory_listener
+configure: makerspace_material_store.settings
