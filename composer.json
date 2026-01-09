@@ -1,0 +1,5 @@
+{
+    "name": "makehaven/makerspace_material_store",
+    "type": "drupal-custom-module",
+    "description": "Manages Makerspace Material Store transactions, tabs, and PayPal integrations."
+}
