@@ -1,0 +1,6 @@
+use store tab:
+  title: 'Use Store Tab'
+  description: 'Allow users to add items to their personal tab and pay later.'
+administer store transactions:
+  title: 'Administer Store Transactions'
+  description: 'Manage all store transactions and tabs.'

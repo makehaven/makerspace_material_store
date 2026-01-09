@@ -1,0 +1,36 @@
+/**
+ * Custom styling for Makerspace Material Store.
+ */
+
+/* Ensure black text on custom buttons, even on hover */
+.makerspace-material-store-block .btn-primary,
+.makerspace-material-store-block .btn-outline-primary,
+.makerspace-material-store-block .btn-secondary,
+.ui-dialog-content .btn-primary,
+.ui-dialog-content .btn-secondary,
+.ui-dialog-content .btn-outline-primary {
+  transition: all 0.2s ease;
+}
+
+/* Specific fix for white text on hover issue */
+.makerspace-material-store-block .btn-outline-primary:hover,
+.ui-dialog-content .btn-outline-primary:hover {
+  color: #0d6efd !important; /* Keep blue text on white hover */
+  background-color: #f8f9fa !important;
+}
+
+/* Staff Warning button black text */
+.btn-warning.text-dark {
+  color: #212529 !important;
+}
+
+.btn-warning.text-dark:hover {
+  color: #000000 !important;
+}
+
+/* Small image styling in lists */
+.img-thumbnail {
+  background-color: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: .25rem;
+}

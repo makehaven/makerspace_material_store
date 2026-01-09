@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * @file
+ * Hooks for Makerspace Material Store.
+ */
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\eck\EckEntityInterface;
+
+/**
+ * Implements hook_entity_insert().
+ * 
+ * Reconciles pending material_transactions when an inventory_adjustment is created from a sale.
+ */
+function makerspace_material_store_entity_insert(EntityInterface $entity) {
+  // We only care about inventory adjustments.
+  if ($entity->getEntityTypeId() !== 'material_inventory' || $entity->bundle() !== 'inventory_adjustment') {
+    return;
+  }
+
+  // We only care if the reason is 'sale'.
+  if ($entity->get('field_inventory_change_reason')->value !== 'sale') {
+    return;
+  }
+
+  // Get the material ID and memo.
+  $material_id = $entity->get('field_inventory_ref_material')->target_id;
+  $memo = $entity->get('field_inventory_change_memo')->value;
+
+  // Attempt to parse User ID from memo if available (e.g. "[UID:123] ...").
+  // This requires the listener to be updated to put it there.
+  if (preg_match('/\[UID:(\d+)\]/', $memo, $matches)) {
+    $uid = $matches[1];
+    _makerspace_material_store_reconcile_transaction((int) $uid, (int) $material_id);
+  }
+}
+
+/**
+ * Helper to mark a pending transaction as paid.
+ */
+function _makerspace_material_store_reconcile_transaction(int $uid, int $material_id) {
+  $storage = \Drupal::entityTypeManager()->getStorage('material_transaction');
+  
+  // Find ONE pending transaction for this user and material.
+  // We process them one by one as the listener creates one adjustment per line item.
+  $query = $storage->getQuery()
+    ->condition('field_transaction_owner', $uid)
+    ->condition('field_material_ref', $material_id)
+    ->condition('field_transaction_status', 'pending')
+    ->range(0, 1)
+    ->sort('created', 'ASC') // Oldest first
+    ->accessCheck(FALSE);
+    
+  $ids = $query->execute();
+  
+  if (!empty($ids)) {
+    $transaction = $storage->load(reset($ids));
+    if ($transaction) {
+      $transaction->set('field_transaction_status', 'paid');
+      $transaction->save();
+      \Drupal::logger('makerspace_material_store')->info('Reconciled transaction @id for user @uid, material @mid.', [
+        '@id' => $transaction->id(),
+        '@uid' => $uid,
+        '@mid' => $material_id,
+      ]);
+    }
+  }
+}

@@ -1,0 +1,6 @@
+makerspace_material_store.settings:
+  title: 'Material Store Settings'
+  description: 'Configure PayPal settings for the material store.'
+  parent: system.admin_config_services
+  route_name: makerspace_material_store.settings
+  weight: 100

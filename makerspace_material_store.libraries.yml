@@ -1,0 +1,4 @@
+store_ui:
+  css:
+    theme:
+      css/store-ui.css: {}

@@ -1,0 +1,111 @@
+makerspace_material_store.checkout_item_page:
+  path: '/store/checkout-item/{material}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::checkoutItemPage'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node
+
+makerspace_material_store.api_add_tab_item:
+  path: '/api/store/tab/add'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::apiAddTabItem'
+  methods: [POST]
+  requirements:
+    _access: 'TRUE'
+
+makerspace_material_store.add_to_tab_modal:
+  path: '/store/add-to-tab-modal/{material}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::addToTabModal'
+  requirements:
+    _permission: 'use store tab'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node
+
+makerspace_material_store.purchase_history:
+  path: '/store/history'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::viewHistory'
+    _title: 'My Purchase History'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+
+makerspace_material_store.view_tab:
+  path: '/store/tab'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::viewTab'
+    _title: 'My Store Tab'
+  requirements:
+    _permission: 'use store tab'
+
+makerspace_material_store.remove_from_tab:
+  path: '/store/tab/remove/{material_transaction}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::removeFromTab'
+  requirements:
+    _permission: 'use store tab'
+    material_transaction: \d+
+  options:
+    parameters:
+      material_transaction:
+        type: entity:material_transaction
+
+makerspace_material_store.dispense_form:
+  path: '/store/dispense/{material}'
+  defaults:
+    _form: '\Drupal\makerspace_material_store\Form\DispenseForm'
+    _title: 'Dispense Material'
+  requirements:
+    _permission: 'administer store transactions'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node
+
+makerspace_material_store.settings:
+  path: '/admin/config/makerspace/store'
+  defaults:
+    _form: '\Drupal\makerspace_material_store\Form\StoreSettingsForm'
+    _title: 'Material Store Settings'
+  requirements:
+    _permission: 'administer store transactions'
+
+makerspace_material_store.add_to_tab:
+  path: '/store/add-to-tab/{material}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::addToTab'
+  requirements:
+    _permission: 'use store tab'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node
+
+makerspace_material_store.checkout_tab:
+  path: '/store/checkout/tab'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::checkoutTab'
+  requirements:
+    _permission: 'use store tab'
+
+makerspace_material_store.buy_now:
+  path: '/store/buy-now/{material}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::buyNow'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node

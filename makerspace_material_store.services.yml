@@ -1,0 +1,4 @@
+services:
+  makerspace_material_store.payment_service:
+    class: Drupal\makerspace_material_store\Service\StorePaymentService
+    arguments: ['@config.factory']
