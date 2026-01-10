@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * @file
+ * Install and update hooks for Makerspace Material Store.
+ */
+
+/**
+ * Set default tab limits to $250 and 90 days.
+ */
+function makerspace_material_store_update_9001() {
+  $config = \Drupal::configFactory()->getEditable('makerspace_material_store.settings');
+  $config->set('max_tab_amount', 250)
+    ->set('max_tab_days', 90)
+    ->save();
+}

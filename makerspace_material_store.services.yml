@@ -2,3 +2,6 @@ services:
   makerspace_material_store.payment_service:
     class: Drupal\makerspace_material_store\Service\StorePaymentService
     arguments: ['@config.factory']
+  makerspace_material_store.tab_limit:
+    class: Drupal\makerspace_material_store\Service\TabLimitService
+    arguments: ['@entity_type.manager', '@config.factory', '@string_translation']

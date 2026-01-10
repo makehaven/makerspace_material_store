@@ -7,6 +7,7 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\Url;
 use Drupal\makerspace_material_store\Service\StorePaymentService;
+use Drupal\makerspace_material_store\Service\TabLimitService;
 use Drupal\node\NodeInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Drupal\Core\Ajax\AjaxResponse;
@@ -72,7 +73,20 @@ class StoreController extends ControllerBase {
       return new JsonResponse(['error' => 'Invalid material ID'], 404);
     }
 
+    /** @var \Drupal\user\UserInterface $account */
+    $account = $this->entityTypeManager->getStorage('user')->load($uid);
+    if (!$account) {
+      return new JsonResponse(['error' => 'Invalid user account.'], 404);
+    }
+
     try {
+      $unit_cost = $this->getMaterialUnitCost($material);
+      $pending_total = $unit_cost * (float) $qty;
+      $limit_status = $this->tabLimitService->getStatus($account, $pending_total);
+      if ($limit_status['blocked']) {
+        return new JsonResponse(['error' => $limit_status['reason']], 403);
+      }
+
       // Create Transaction.
       $transaction = $this->entityTypeManager->getStorage('material_transaction')->create([
         'type' => 'purchase',
@@ -80,7 +94,7 @@ class StoreController extends ControllerBase {
         'field_quantity' => $qty,
         'field_transaction_status' => 'pending',
         'field_transaction_owner' => $uid,
-        'field_transaction_amount' => $material->get('field_material_sales_cost')->value,
+        'field_transaction_amount' => $material->get('field_material_unit_cost')->value,
         'title' => $this->t('Auto Tab: @item', ['@item' => $material->label()]),
       ]);
       $transaction->save();
@@ -137,12 +151,20 @@ class StoreController extends ControllerBase {
   protected $currentUser;
 
   /**
+   * Tab limit service.
+   *
+   * @var \Drupal\makerspace_material_store\Service\TabLimitService
+   */
+  protected $tabLimitService;
+
+  /**
    * Constructs the controller.
    */
-  public function __construct(StorePaymentService $payment_service, EntityTypeManagerInterface $entity_type_manager, AccountInterface $current_user) {
+  public function __construct(StorePaymentService $payment_service, EntityTypeManagerInterface $entity_type_manager, AccountInterface $current_user, TabLimitService $tab_limit_service) {
     $this->paymentService = $payment_service;
     $this->entityTypeManager = $entity_type_manager;
     $this->currentUser = $current_user;
+    $this->tabLimitService = $tab_limit_service;
   }
 
   /**
@@ -152,7 +174,8 @@ class StoreController extends ControllerBase {
     return new static(
       $container->get('makerspace_material_store.payment_service'),
       $container->get('entity_type.manager'),
-      $container->get('current_user')
+      $container->get('current_user'),
+      $container->get('makerspace_material_store.tab_limit')
     );
   }
 
@@ -171,6 +194,20 @@ class StoreController extends ControllerBase {
   }
 
   /**
+   * Redirects to PayPal for "Add to Cart".
+   */
+  public function addToCart(NodeInterface $material) {
+    if ($material->bundle() !== 'material') {
+      $this->messenger()->addError($this->t('Invalid material.'));
+      return $this->redirect('<front>');
+    }
+
+    $url = $this->paymentService->getAddToCartUrl($material, 1);
+    
+    return new TrustedRedirectResponse($url);
+  }
+
+  /**
    * Adds an item to the user's "Tab".
    */
   public function addToTab(NodeInterface $material, Request $request) {
@@ -179,8 +216,24 @@ class StoreController extends ControllerBase {
       return $this->redirect('<front>');
     }
 
-    $qty = $request->query->get('qty') ?: 1;
-    if ($qty < 1) $qty = 1;
+    $qty = $request->query->get('qty');
+    
+    // If quantity is missing, redirect to the confirmation/quantity form.
+    if ($qty === NULL || $qty === '') {
+      return $this->redirect('makerspace_material_store.checkout_item_page', ['material' => $material->id()]);
+    }
+
+    if ($qty < 0.01) {
+      $qty = 1;
+    }
+
+    $unit_cost = $this->getMaterialUnitCost($material);
+    $pending_total = $unit_cost * (float) $qty;
+    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total);
+    if ($limit_status['blocked']) {
+      $this->messenger()->addError($this->t('Cannot add to tab: @reason', ['@reason' => $limit_status['reason']]));
+      return $this->redirect('makerspace_material_store.view_tab');
+    }
 
     // Check if material_transaction entity exists.
     try {
@@ -191,7 +244,7 @@ class StoreController extends ControllerBase {
         'field_quantity' => $qty,
         'field_transaction_status' => 'pending',
         'field_transaction_owner' => $this->currentUser->id(),
-        'field_transaction_amount' => $material->get('field_material_sales_cost')->value,
+        'field_transaction_amount' => $material->get('field_material_unit_cost')->value,
         'title' => $this->t('Tab Item: @item', ['@item' => $material->label()]),
       ]);
       $transaction->save();
@@ -205,21 +258,32 @@ class StoreController extends ControllerBase {
         'field_inventory_change_memo' => $this->t('Added to tab by user @uid', ['@uid' => $this->currentUser->id()]),
       ])->save();
 
-      $this->messenger()->addStatus($this->t('Added @qty x @item to your tab.', [
-        '@qty' => $qty,
-        '@item' => $material->label(),
-      ]));
+      $this->messenger()->addStatus(Markup::create(
+        $this->t('Added @qty x @item to your tab. ', [
+          '@qty' => $qty,
+          '@item' => $material->label(),
+        ]) . 
+        '<a href="' . Url::fromRoute('makerspace_material_store.view_tab')->toString() . '" class="btn btn-sm btn-success ms-2"><i class="fas fa-shopping-cart me-1"></i> ' . $this->t('View Tab') . '</a>'
+      ));
     }
     catch (\Exception $e) {
       $this->messenger()->addError($this->t('Could not add to tab: @error', ['@error' => $e->getMessage()]));
     }
 
-    // Redirect back to store or material page.
-    $referer = \Drupal::request()->headers->get('referer');
-    if ($referer) {
-      return new RedirectResponse($referer);
+    // Redirect based on configuration.
+    $config = \Drupal::config('makerspace_material_store.settings');
+    $redirect_option = $config->get('post_add_redirect') ?: 'store';
+    
+    if ($redirect_option === 'cart') {
+      return $this->redirect('makerspace_material_store.view_tab');
     }
-    return $this->redirect('entity.node.canonical', ['node' => $material->id()]);
+    elseif ($redirect_option === 'item') {
+      return $this->redirect('entity.node.canonical', ['node' => $material->id()]);
+    }
+    else {
+      // Default to store.
+      return new RedirectResponse('/store');
+    }
   }
 
   /**
@@ -236,7 +300,7 @@ class StoreController extends ControllerBase {
 
     if (empty($ids)) {
       $this->messenger()->addMessage($this->t('Your tab is empty.'));
-      return $this->redirect('<front>'); // Or redirect to store.
+      return $this->redirect('<front>');
     }
 
     $transactions = $storage->loadMultiple($ids);
@@ -284,9 +348,13 @@ class StoreController extends ControllerBase {
     if (empty($ids)) {
       return [
         '#markup' => '<div class="alert alert-info py-4 text-center">' . 
-                     '<h4>' . $this->t('Your tab is empty.') . '</h4>' .
-                     '<a href="/store" class="btn btn-primary mt-2">' . $this->t('Go to Store') . '</a>' .
+                     '<h4>' . $this->t('Your tab is empty.') . '</h4>' . 
+                     '<a href="/store" class="btn btn-primary mt-2">' . $this->t('Go to Store') . '</a>' . 
                      '</div>',
+        '#cache' => [
+          'max-age' => 0,
+          'contexts' => ['user'],
+        ],
       ];
     }
 
@@ -302,7 +370,7 @@ class StoreController extends ControllerBase {
       $material_id = $transaction->get('field_material_ref')->target_id;
       /** @var \Drupal\node\NodeInterface $material */
       $material = $this->entityTypeManager->getStorage('node')->load($material_id);
-      $qty = (int) $transaction->get('field_quantity')->value;
+      $qty = (float) $transaction->get('field_quantity')->value;
       $price = (float) $transaction->get('field_transaction_amount')->value;
       $row_total = $qty * $price;
       $grand_total += $row_total;
@@ -369,8 +437,6 @@ class StoreController extends ControllerBase {
       ];
     }
 
-    $build['items'] = $items_build;
-
     $build['summary_card'] = [
       '#type' => 'container',
       '#attributes' => ['class' => ['card', 'bg-light', 'border-primary', 'mb-4']],
@@ -389,483 +455,174 @@ class StoreController extends ControllerBase {
       ],
     ];
 
+    $build['items'] = $items_build;
+
+    $build['#cache'] = [
+      'max-age' => 0,
+      'contexts' => ['user'],
+    ];
+
     return $build;
   }
 
-    /**
-
-     * Removes a transaction from the tab and refunds inventory.
-
-     */
-
-    public function removeFromTab(\Drupal\Core\Entity\ContentEntityInterface $material_transaction) {
-
-      if (!$material_transaction) {
-
-        $this->messenger()->addError($this->t('Transaction not found.'));
-
-        return new RedirectResponse(Url::fromRoute('makerspace_material_store.view_tab')->toString());
-
-      }
-
-  
-
-      // Access check.
-
-      if ($material_transaction->get('field_transaction_owner')->target_id != $this->currentUser->id() && !$this->currentUser->hasPermission('administer store transactions')) {
-
-        $this->messenger()->addError($this->t('Access denied.'));
-
-        return new RedirectResponse(Url::fromRoute('makerspace_material_store.view_tab')->toString());
-
-      }
-
-  
-
-      if ($material_transaction->get('field_transaction_status')->value !== 'pending') {
-
-        $this->messenger()->addError($this->t('Cannot remove items that are not pending.'));
-
-        return new RedirectResponse(Url::fromRoute('makerspace_material_store.view_tab')->toString());
-
-      }
-
-  
-
-      $qty = (int) $material_transaction->get('field_quantity')->value;
-
-      $material_id = $material_transaction->get('field_material_ref')->target_id;
-
-  
-
-      // Refund Inventory.
-
-      try {
-
-        $this->entityTypeManager->getStorage('material_inventory')->create([
-
-          'type' => 'inventory_adjustment',
-
-          'field_inventory_ref_material' => $material_id,
-
-          'field_inventory_quantity_change' => $qty, // Positive to put back
-
-          'field_inventory_change_reason' => 'restock',
-
-          'field_inventory_change_memo' => $this->t('Removed from tab (Mistake) by user @uid', ['@uid' => $this->currentUser->id()]),
-
-        ])->save();
-
-  
-
-        // Mark as removed instead of deleting, to keep a history of mistakes.
-
-        $material_transaction->set('field_transaction_status', 'removed');
-
-        $material_transaction->save();
-
-  
-
-        $this->messenger()->addStatus($this->t('Item marked as removed (mistake) and inventory refunded.'));
-
-      } catch (\Exception $e) {
-
-        $this->messenger()->addError($this->t('Error removing item: @msg', ['@msg' => $msg = $e->getMessage()]));
-
-      }
-
-  
-
-      return new RedirectResponse(Url::fromRoute('makerspace_material_store.view_tab')->toString());
-
+  /**
+   * Removes a transaction from the tab and refunds inventory.
+   */
+  public function removeFromTab(\Drupal\Core\Entity\ContentEntityInterface $material_transaction) {
+    if (!$material_transaction) {
+      $this->messenger()->addError($this->t('Transaction not found.'));
+      return $this->redirect('makerspace_material_store.view_tab');
     }
 
-    
+    // Access check.
+    if ($material_transaction->get('field_transaction_owner')->target_id != $this->currentUser->id() && !$this->currentUser->hasPermission('administer store transactions')) {
+      $this->messenger()->addError($this->t('Access denied.'));
+      return $this->redirect('makerspace_material_store.view_tab');
+    }
 
-        /**
+    if ($material_transaction->get('field_transaction_status')->value !== 'pending') {
+      $this->messenger()->addError($this->t('Cannot remove items that are not pending.'));
+      return $this->redirect('makerspace_material_store.view_tab');
+    }
 
-    
+    $qty = (float) $material_transaction->get('field_quantity')->value;
+    $material_id = $material_transaction->get('field_material_ref')->target_id;
 
-         * Displays the user's purchase history.
+    // Refund Inventory.
+    try {
+      $this->entityTypeManager->getStorage('material_inventory')->create([
+        'type' => 'inventory_adjustment',
+        'field_inventory_ref_material' => $material_id,
+        'field_inventory_quantity_change' => $qty, // Positive to put back
+        'field_inventory_change_reason' => 'restock',
+        'field_inventory_change_memo' => $this->t('Removed from tab (Mistake) by user @uid', ['@uid' => $this->currentUser->id()]),
+      ])->save();
 
-    
+      // Mark as removed instead of deleting, to keep a history of mistakes.
+      $material_transaction->set('field_transaction_status', 'removed');
+      $material_transaction->save();
 
-         */
-
-    
-
-        public function viewHistory() {
-
-    
-
-          $storage = $this->entityTypeManager->getStorage('material_transaction');
-
-    
-
-          $query = $storage->getQuery()
-
-    
-
-            ->condition('field_transaction_owner', $this->currentUser->id())
-
-    
-
-            ->condition('field_transaction_status', 'paid')
-
-    
-
-            ->sort('created', 'DESC')
-
-    
-
-            ->accessCheck(FALSE);
-
-    
-
-          $ids = $query->execute();
-
-    
-
+      $this->messenger()->addStatus($this->t('Item marked as removed (mistake) and inventory refunded.'));
       
+      \Drupal::logger('makerspace_material_store')->info('User @uid removed transaction @tid from tab.', [
+        '@uid' => $this->currentUser->id(),
+        '@tid' => $material_transaction->id(),
+      ]);
+    }
+    catch (\Exception $e) {
+      $this->messenger()->addError($this->t('Error removing item: @msg', ['@msg' => $e->getMessage()]));
+    }
 
-    
+    return $this->redirect('makerspace_material_store.view_tab');
+  }
 
-          if (empty($ids)) {
+  /**
+   * Displays the user's purchase history.
+   */
+  public function viewHistory() {
+    $storage = $this->entityTypeManager->getStorage('material_transaction');
+    $query = $storage->getQuery()
+      ->condition('field_transaction_owner', $this->currentUser->id())
+      ->condition('field_transaction_status', 'paid')
+      ->sort('created', 'DESC')
+      ->accessCheck(FALSE);
+    $ids = $query->execute();
 
-    
+    if (empty($ids)) {
+      return [
+        '#markup' => '<div class="alert alert-light py-4 text-center border">' .
+        '<h4>' . $this->t('No purchase history found.') . '</h4>' .
+        '<a href="/store" class="btn btn-outline-primary mt-2">' . $this->t('Go to Store') . '</a>' .
+        '</div>',
+      ];
+    }
 
-            return [
+    $transactions = $storage->loadMultiple($ids);
+    $build['list'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['list-group', 'shadow-sm']],
+    ];
 
-    
+    foreach ($transactions as $transaction) {
+      $material_id = $transaction->get('field_material_ref')->target_id;
+      /** @var \Drupal\node\NodeInterface $material */
+      $material = $this->entityTypeManager->getStorage('node')->load($material_id);
+      $qty = (int) $transaction->get('field_quantity')->value;
+      $price = (float) $transaction->get('field_transaction_amount')->value;
+      $row_total = $qty * $price;
 
-              '#markup' => '<div class="alert alert-light py-4 text-center border">' . 
+      // Handle Image.
+      $image_render = [];
+      if ($material && $material->hasField('field_material_image') && !$material->get('field_material_image')->isEmpty()) {
+        $image_render = [
+          '#theme' => 'image_style',
+          '#style_name' => 'thumbnail',
+          '#uri' => $material->get('field_material_image')->entity->getFileUri(),
+          '#attributes' => ['class' => ['img-thumbnail', 'me-3'], 'style' => 'width: 50px; height: 50px; object-fit: cover;'],
+        ];
+      }
+      else {
+        $image_render = [
+          '#markup' => '<div class="bg-light border text-muted d-flex align-items-center justify-content-center me-3" style="width: 50px; height: 50px;"><i class="fas fa-history small"></i></div>',
+        ];
+      }
 
-    
-
-                           '<h4>' . $this->t('No purchase history found.') . '</h4>' .
-
-    
-
-                           '<a href="/store" class="btn btn-outline-primary mt-2">' . $this->t('Go to Store') . '</a>' .
-
-    
-
-                           '</div>',
-
-    
-
-            ];
-
-    
-
-          }
-
-    
-
-      
-
-    
-
-          $transactions = $storage->loadMultiple($ids);
-
-    
-
-          $build['list'] = [
-
-    
-
+      $build['list']['item_' . $transaction->id()] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['list-group-item', 'p-3']],
+        'row' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['d-flex', 'align-items-center', 'justify-content-between']],
+          'left' => [
             '#type' => 'container',
-
-    
-
-            '#attributes' => ['class' => ['list-group', 'shadow-sm']],
-
-    
-
-          ];
-
-    
-
-      
-
-    
-
-          foreach ($transactions as $transaction) {
-
-    
-
-            $material_id = $transaction->get('field_material_ref')->target_id;
-
-    
-
-            /** @var \Drupal\node\NodeInterface $material */
-
-    
-
-            $material = $this->entityTypeManager->getStorage('node')->load($material_id);
-
-    
-
-            $qty = (int) $transaction->get('field_quantity')->value;
-
-    
-
-            $price = (float) $transaction->get('field_transaction_amount')->value;
-
-    
-
-            $row_total = $qty * $price;
-
-    
-
-      
-
-    
-
-            // Handle Image.
-
-    
-
-            $image_render = [];
-
-    
-
-            if ($material && $material->hasField('field_material_image') && !$material->get('field_material_image')->isEmpty()) {
-
-    
-
-              $image_render = [
-
-    
-
-                '#theme' => 'image_style',
-
-    
-
-                '#style_name' => 'thumbnail',
-
-    
-
-                '#uri' => $material->get('field_material_image')->entity->getFileUri(),
-
-    
-
-                '#attributes' => ['class' => ['img-thumbnail', 'me-3'], 'style' => 'width: 50px; height: 50px; object-fit: cover;'],
-
-    
-
-              ];
-
-    
-
-            }
-
-    
-
-            else {
-
-    
-
-              $image_render = [
-
-    
-
-                '#markup' => '<div class="bg-light border text-muted d-flex align-items-center justify-content-center me-3" style="width: 50px; height: 50px;"><i class="fas fa-history small"></i></div>',
-
-    
-
-              ];
-
-    
-
-            }
-
-    
-
-      
-
-    
-
-            $build['list']['item_' . $transaction->id()] = [
-
-    
-
+            '#attributes' => ['class' => ['d-flex', 'align-items-center']],
+            'image' => $image_render,
+            'info' => [
               '#type' => 'container',
-
-    
-
-              '#attributes' => ['class' => ['list-group-item', 'p-3']],
-
-    
-
-              'row' => [
-
-    
-
-                '#type' => 'container',
-
-    
-
-                '#attributes' => ['class' => ['d-flex', 'align-items-center', 'justify-content-between']],
-
-    
-
-                'left' => [
-
-    
-
-                  '#type' => 'container',
-
-    
-
-                  '#attributes' => ['class' => ['d-flex', 'align-items-center']],
-
-    
-
-                  'image' => $image_render,
-
-    
-
-                  'info' => [
-
-    
-
-                    '#type' => 'container',
-
-    
-
-                    'title' => [
-
-    
-
-                      '#markup' => '<div class="fw-bold">' . ($material ? $material->toLink()->toString() : $this->t('Unknown Material')) . '</div>',
-
-    
-
-                    ],
-
-    
-
-                                  'date' => [
-
-    
-
-                                    '#markup' => '<div class="small text-muted">' . $this->t('Paid @date', ['@date' => date('M d, Y', $transaction->get('created')->value)]) . ' &bull; ' . $this->t('@qty units', ['@qty' => $qty]) . '</div>',
-
-    
-
-                                  ],
-
-    
-
-                  ],
-
-    
-
-                ],
-
-    
-
-                'right' => [
-
-    
-
-                  '#type' => 'container',
-
-    
-
-                  '#attributes' => ['class' => ['text-end']],
-
-    
-
-                  'total' => [
-                    '#markup' => '<div class="fw-bold text-dark">$' . number_format($row_total, 2) . '</div>',
-                  ],
-
-    
-
-                  'status' => [
-
-    
-
-                    '#markup' => '<span class="badge bg-success small">' . $this->t('Paid') . '</span>',
-
-    
-
-                  ],
-
-    
-
-                ],
-
-    
-
+              'title' => [
+                '#markup' => '<div class="fw-bold">' . ($material ? $material->toLink()->toString() : $this->t('Unknown Material')) . '</div>',
               ],
-
-    
-
-            ];
-
-    
-
-          }
-
-    
-
-      
-
-    
-
-          $build['actions'] = [
-
-    
-
-            '#type' => 'container',
-
-    
-
-            '#attributes' => ['class' => ['mt-4']],
-
-    
-
-            'back' => [
-
-    
-
-              '#type' => 'link',
-
-    
-
-              '#title' => $this->t('Back to Store'),
-
-    
-
-              '#url' => Url::fromRoute('<front>'),
-
-    
-
-              '#attributes' => ['class' => ['btn', 'btn-secondary']],
-
-    
-
+              'date' => [
+                '#markup' => '<div class="small text-muted">' . $this->t('Paid @date', ['@date' => date('M d, Y', $transaction->get('created')->value)]) . ' &bull; ' . $this->t('@qty units', ['@qty' => $qty]) . '</div>',
+              ],
             ],
-
-    
-
-          ];
-
-    
-
-      
-
-    
-
-          return $build;
-
-    
-
-        }
-
-    
-
+          ],
+          'right' => [
+            '#type' => 'container',
+            '#attributes' => ['class' => ['text-end']],
+            'total' => [
+              '#markup' => '<div class="fw-bold text-dark">$' . number_format($row_total, 2) . '</div>',
+            ],
+            'status' => [
+              '#markup' => '<span class="badge bg-success small">' . $this->t('Paid') . '</span>',
+            ],
+          ],
+        ],
+      ];
     }
+
+    $build['actions'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mt-4']],
+      'back' => [
+        '#type' => 'link',
+        '#title' => $this->t('Back to Store'),
+        '#url' => Url::fromRoute('<front>'),
+        '#attributes' => ['class' => ['btn', 'btn-secondary']],
+      ],
+    ];
+
+    return $build;
+  }
+
+  /**
+   * Helper to read the unit cost from a material node.
+   */
+  protected function getMaterialUnitCost(NodeInterface $material) {
+    if ($material->hasField('field_material_unit_cost') && !$material->get('field_material_unit_cost')->isEmpty()) {
+      return (float) $material->get('field_material_unit_cost')->value;
+    }
+    return 0.0;
+  }
+
+}

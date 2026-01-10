@@ -47,7 +47,7 @@ class StorePaymentService {
     $notify_url = $config->get('notify_url'); // The IPN listener
 
     // Get price.
-    $price = $material->get('field_material_sales_cost')->value;
+    $price = $material->get('field_material_unit_cost')->value;
     $item_name = $material->label();
 
     $query = [
@@ -63,6 +63,58 @@ class StorePaymentService {
       'solution_type' => 'sole',
       'landing_page' => 'billing',
       'custom' => json_encode(['uid' => \Drupal::currentUser()->id(), 'type' => 'buy_now']),
+    ];
+
+    if ($return_url) {
+      $query['return'] = $return_url;
+    }
+    if ($cancel_url) {
+      $query['cancel_return'] = $cancel_url;
+    }
+    if ($notify_url) {
+      $query['notify_url'] = $notify_url;
+    }
+
+    return 'https://www.paypal.com/cgi-bin/webscr?' . http_build_query($query);
+  }
+
+  /**
+   * Generates a PayPal Add to Cart URL for a single material.
+   *
+   * @param \Drupal\node\NodeInterface $material
+   *   The material node.
+   * @param int $quantity
+   *   The quantity.
+   *
+   * @return string
+   *   The PayPal URL.
+   */
+  public function getAddToCartUrl(NodeInterface $material, int $quantity = 1): string {
+    $config = $this->configFactory->get('makerspace_material_store.settings');
+    $business = $config->get('paypal_business_id') ?: 'info@makehaven.org';
+    $return_url = $config->get('return_url');
+    $cancel_url = $config->get('cancel_url');
+    $notify_url = $config->get('notify_url');
+
+    // Get price.
+    $price = $material->get('field_material_unit_cost')->value;
+    $item_name = $material->label();
+
+    $query = [
+      'cmd' => '_cart',
+      'add' => '1',
+      'business' => $business,
+      'item_name' => $item_name,
+      'item_number' => $material->id(),
+      'amount' => $price,
+      'quantity' => $quantity,
+      'currency_code' => 'USD',
+      'no_shipping' => '1',
+      'no_note' => '1',
+      'solution_type' => 'sole',
+      'landing_page' => 'billing',
+      'shopping_url' => $return_url, // URL to return to after adding to cart
+      'custom' => json_encode(['uid' => \Drupal::currentUser()->id(), 'type' => 'add_to_cart']),
     ];
 
     if ($return_url) {
@@ -113,7 +165,7 @@ class StorePaymentService {
     foreach ($items as $item) {
       /** @var \Drupal\node\NodeInterface $material */
       $material = $item['material'];
-      $price = (float) ($item['price'] ?? $material->get('field_material_sales_cost')->value);
+      $price = (float) ($item['price'] ?? $material->get('field_material_unit_cost')->value);
       $name = $item['name'] ?? $material->label();
       $qty = $item['quantity'] ?? 1;
 

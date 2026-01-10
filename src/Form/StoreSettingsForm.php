@@ -62,11 +62,21 @@ class StoreSettingsForm extends ConfigFormBase {
       '#open' => TRUE,
     ];
 
+    $default_amount = $config->get('max_tab_amount');
+    if ($default_amount === NULL || $default_amount === '') {
+      $default_amount = 250;
+    }
+
+    $default_days = $config->get('max_tab_days');
+    if ($default_days === NULL || $default_days === '') {
+      $default_days = 90;
+    }
+
     $form['limits']['max_tab_amount'] = [
       '#type' => 'number',
       '#title' => $this->t('Maximum Tab Amount ($)'),
       '#description' => $this->t('Members will be blocked from adding to their tab if their balance exceeds this amount. Set 0 for no limit.'),
-      '#default_value' => $config->get('max_tab_amount') ?: 50,
+      '#default_value' => $default_amount,
       '#step' => 0.01,
     ];
 
@@ -74,7 +84,25 @@ class StoreSettingsForm extends ConfigFormBase {
       '#type' => 'number',
       '#title' => $this->t('Maximum Tab Age (Days)'),
       '#description' => $this->t('Members will be blocked from adding to their tab if they have pending items older than this many days. Set 0 for no limit.'),
-      '#default_value' => $config->get('max_tab_days') ?: 30,
+      '#default_value' => $default_days,
+    ];
+
+    $form['ux'] = [
+      '#type' => 'details',
+      '#title' => $this->t('User Experience'),
+      '#open' => TRUE,
+    ];
+
+    $form['ux']['post_add_redirect'] = [
+      '#type' => 'select',
+      '#title' => $this->t('Redirect After Adding to Tab'),
+      '#options' => [
+        'store' => $this->t('Store Front (/store)'),
+        'item' => $this->t('Stay on Item Page'),
+        'cart' => $this->t('Go to Tab/Cart'),
+      ],
+      '#default_value' => $config->get('post_add_redirect') ?: 'store',
+      '#description' => $this->t('Where to send the user after they successfully add an item to their tab via the modal or direct link.'),
     ];
 
     $form['api'] = [
@@ -105,6 +133,7 @@ class StoreSettingsForm extends ConfigFormBase {
       ->set('notify_url', $form_state->getValue('notify_url'))
       ->set('max_tab_amount', $form_state->getValue('max_tab_amount'))
       ->set('max_tab_days', $form_state->getValue('max_tab_days'))
+      ->set('post_add_redirect', $form_state->getValue('post_add_redirect'))
       ->set('api_key', $form_state->getValue('api_key'))
       ->save();
 

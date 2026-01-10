@@ -34,3 +34,29 @@
   border: 1px solid #dee2e6;
   border-radius: .25rem;
 }
+
+/* Tab Summary Styling */
+.store-tab-summary {
+  background-color: #f8f9fa;
+  padding: 1rem;
+  border-radius: 0.25rem;
+  border: 1px solid #e9ecef;
+}
+
+/* Modal form action button readability */
+.makerspace-store-add-form .btn-primary {
+  background: linear-gradient(180deg, #0d6efd 0%, #0b5ed7 100%);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  box-shadow: 0 6px 12px rgba(13, 110, 253, 0.2);
+}
+
+.makerspace-store-add-form .btn-primary:hover,
+.makerspace-store-add-form .btn-primary:focus {
+  background: linear-gradient(180deg, #0c63e4 0%, #0a58ca 100%);
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(10, 88, 202, 0.25);
+}

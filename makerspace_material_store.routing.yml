@@ -109,3 +109,15 @@ makerspace_material_store.buy_now:
     parameters:
       material:
         type: entity:node
+
+makerspace_material_store.add_to_cart:
+  path: '/store/add-to-cart/{material}'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreController::addToCart'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    material: \d+
+  options:
+    parameters:
+      material:
+        type: entity:node
