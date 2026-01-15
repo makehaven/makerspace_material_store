@@ -7,6 +7,7 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslationInterface;
+use Drupal\mh_stripe\Service\StripeHelper;
 
 /**
  * Provides tab limit calculations and enforcement helpers.
@@ -30,12 +31,20 @@ class TabLimitService {
   protected $configFactory;
 
   /**
+   * Stripe helper.
+   *
+   * @var \Drupal\mh_stripe\Service\StripeHelper|null
+   */
+  protected $stripeHelper;
+
+  /**
    * Constructs the service.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, ConfigFactoryInterface $config_factory, TranslationInterface $string_translation) {
+  public function __construct(EntityTypeManagerInterface $entity_type_manager, ConfigFactoryInterface $config_factory, TranslationInterface $string_translation, ?StripeHelper $stripe_helper = NULL) {
     $this->entityTypeManager = $entity_type_manager;
     $this->configFactory = $config_factory;
     $this->stringTranslation = $string_translation;
+    $this->stripeHelper = $stripe_helper;
   }
 
   /**
@@ -46,6 +55,10 @@ class TabLimitService {
    * @param float $pending_addition
    *   Optional total dollar amount that is about to be added.
    *
+   * @param array $options
+   *   Optional settings. Supported keys:
+   *   - skip_terms: TRUE to bypass terms acceptance checks.
+   *
    * @return array
    *   Status information, including:
    *   - blocked: TRUE if the user may not add more to their tab.
@@ -54,8 +67,9 @@ class TabLimitService {
    *   - projected_total: Total including the pending addition.
    *   - oldest_days: Age in days of the oldest pending item.
    */
-  public function getStatus(AccountInterface $account, float $pending_addition = 0.0) {
+  public function getStatus(AccountInterface $account, float $pending_addition = 0.0, array $options = []) {
     $status = [
+      'eligible' => TRUE,
       'blocked' => FALSE,
       'reason' => '',
       'total' => 0.0,
@@ -64,7 +78,44 @@ class TabLimitService {
     ];
 
     if (!$account || !$account->isAuthenticated()) {
+      $status['eligible'] = FALSE;
       return $status;
+    }
+
+    $skip_terms = !empty($options['skip_terms']);
+    $config = $this->configFactory->get('makerspace_material_store.settings');
+
+    $user_storage = $this->entityTypeManager->getStorage('user');
+    $user = $user_storage->load($account->id());
+    if ($user) {
+      if ($user->hasField('field_store_tab_blocked') && (bool) $user->get('field_store_tab_blocked')->value) {
+        $status['blocked'] = TRUE;
+        $status['reason'] = $this->t('Your tab is blocked due to a failed payment. Please checkout manually or contact staff.');
+        return $status;
+      }
+
+      if (!$skip_terms && (bool) $config->get('require_terms_acceptance')) {
+        $accepted = $user->hasField('field_store_tab_terms_accepted') && (bool) $user->get('field_store_tab_terms_accepted')->value;
+        if (!$accepted) {
+          $status['blocked'] = TRUE;
+          $status['reason'] = $this->t('You must accept the tab terms before adding items.');
+          return $status;
+        }
+      }
+
+      if ((bool) $config->get('require_stripe_for_tab')) {
+        $customer_field = $this->stripeHelper?->customerFieldName() ?? 'field_stripe_customer_id';
+        $customer_id = '';
+        if ($user->hasField($customer_field)) {
+          $customer_id = (string) ($user->get($customer_field)->value ?? '');
+        }
+        if ($customer_id === '') {
+          $status['eligible'] = FALSE;
+          $status['blocked'] = TRUE;
+          $status['reason'] = $this->t('A Stripe account is required to use the tab. Please use PayPal checkout instead.');
+          return $status;
+        }
+      }
     }
 
     try {
@@ -99,7 +150,6 @@ class TabLimitService {
 
     $status['projected_total'] = $status['total'] + $pending_addition;
 
-    $config = $this->configFactory->get('makerspace_material_store.settings');
     $max_amount = (float) $config->get('max_tab_amount');
     $max_days = (int) $config->get('max_tab_days');
 

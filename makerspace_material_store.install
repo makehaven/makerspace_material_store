@@ -14,3 +14,112 @@ function makerspace_material_store_update_9001() {
     ->set('max_tab_days', 90)
     ->save();
 }
+
+/**
+ * Add store tab user fields and defaults for Stripe tab settings.
+ */
+function makerspace_material_store_update_9002() {
+  $config = \Drupal::configFactory()->getEditable('makerspace_material_store.settings');
+  if ($config->get('require_stripe_for_tab') === NULL) {
+    $config->set('require_stripe_for_tab', TRUE);
+  }
+  if ($config->get('require_terms_acceptance') === NULL) {
+    $config->set('require_terms_acceptance', TRUE);
+  }
+  if ($config->get('store_tab_terms_message') === NULL) {
+    $config->set('store_tab_terms_message', 'I agree that my account will be charged automatically periodically for items in my tab.');
+  }
+  $config->save();
+
+  $fields = [
+    'field_store_tab_autocharge' => [
+      'type' => 'boolean',
+      'label' => 'Store tab autocharge',
+      'settings' => [
+        'on_label' => 'Enabled',
+        'off_label' => 'Disabled',
+      ],
+      'default_value' => [['value' => 0]],
+    ],
+    'field_store_tab_blocked' => [
+      'type' => 'boolean',
+      'label' => 'Store tab blocked',
+      'settings' => [
+        'on_label' => 'Blocked',
+        'off_label' => 'Active',
+      ],
+      'default_value' => [['value' => 0]],
+    ],
+    'field_store_tab_terms_accepted' => [
+      'type' => 'boolean',
+      'label' => 'Store tab terms accepted',
+      'settings' => [
+        'on_label' => 'Accepted',
+        'off_label' => 'Not accepted',
+      ],
+      'default_value' => [['value' => 0]],
+    ],
+    'field_store_tab_terms_accepted_at' => [
+      'type' => 'timestamp',
+      'label' => 'Store tab terms accepted at',
+    ],
+  ];
+
+  foreach ($fields as $field_name => $definition) {
+    $storage = \Drupal\field\Entity\FieldStorageConfig::loadByName('user', $field_name);
+    if (!$storage) {
+      $storage = \Drupal\field\Entity\FieldStorageConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'user',
+        'type' => $definition['type'],
+        'settings' => $definition['settings'] ?? [],
+      ]);
+      $storage->save();
+    }
+
+    $instance = \Drupal\field\Entity\FieldConfig::loadByName('user', 'user', $field_name);
+    if (!$instance) {
+      $instance = \Drupal\field\Entity\FieldConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'user',
+        'bundle' => 'user',
+        'label' => $definition['label'],
+        'settings' => $definition['settings'] ?? [],
+        'default_value' => $definition['default_value'] ?? NULL,
+      ]);
+      $instance->save();
+    }
+  }
+}
+
+/**
+ * Add Stripe invoice reference field for store transactions.
+ */
+function makerspace_material_store_update_9003() {
+  $storage = \Drupal\field\Entity\FieldStorageConfig::loadByName('material_transaction', 'field_store_stripe_invoice_id');
+  if (!$storage) {
+    $storage = \Drupal\field\Entity\FieldStorageConfig::create([
+      'field_name' => 'field_store_stripe_invoice_id',
+      'entity_type' => 'material_transaction',
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 255,
+      ],
+    ]);
+    $storage->save();
+  }
+
+  $instance = \Drupal\field\Entity\FieldConfig::loadByName('material_transaction', 'purchase', 'field_store_stripe_invoice_id');
+  if (!$instance) {
+    $instance = \Drupal\field\Entity\FieldConfig::create([
+      'field_name' => 'field_store_stripe_invoice_id',
+      'entity_type' => 'material_transaction',
+      'bundle' => 'purchase',
+      'label' => 'Stripe invoice ID',
+      'settings' => [
+        'max_length' => 255,
+      ],
+    ]);
+    $instance->save();
+  }
+}

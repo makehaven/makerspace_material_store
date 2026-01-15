@@ -11,6 +11,7 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\Url;
+use Drupal\Component\Utility\Xss;
 use Drupal\makerspace_material_store\Service\StorePaymentService;
 use Drupal\makerspace_material_store\Service\TabLimitService;
 use Drupal\node\NodeInterface;
@@ -124,19 +125,48 @@ class AddToTabForm extends FormBase {
     ];
 
     $pending_total = $unit_cost * (float) $default_qty;
-    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total);
+    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total, ['skip_terms' => TRUE]);
 
-    if ($limit_status['blocked']) {
+    // Check Eligibility first.
+    $eligible = isset($limit_status['eligible']) ? $limit_status['eligible'] : TRUE;
+
+    if ($eligible && $limit_status['blocked']) {
       $form['limit_notice'] = [
         '#type' => 'container',
         '#attributes' => ['class' => ['alert', 'alert-warning']],
         'message' => [
-          '#markup' => '<strong>' . $this->t('Tab Limit Reached') . '</strong><p class="mb-0">' . $limit_status['reason'] . '</p>',
+          '#markup' => '<strong>' . $this->t('Tab Unavailable') . '</strong><p class="mb-0">' . $limit_status['reason'] . '</p>',
         ],
       ];
     }
 
-    if ($this->currentUser->hasPermission('use store tab')) {
+    $user = $this->entityTypeManager->getStorage('user')->load($this->currentUser->id());
+    $config = $this->config('makerspace_material_store.settings');
+    $require_terms = (bool) $config->get('require_terms_acceptance');
+    $terms_accepted = $user && $user->hasField('field_store_tab_terms_accepted') && (bool) $user->get('field_store_tab_terms_accepted')->value;
+    
+    // Only show terms if eligible.
+    if ($eligible && $require_terms && !$terms_accepted) {
+      $terms_message = (string) $config->get('store_tab_terms_message');
+      if ($terms_message === '') {
+        $terms_message = (string) $this->t('I agree that my account will be charged automatically periodically for items in my tab.');
+      }
+      $form['tab_terms'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['alert', 'alert-info']],
+        'message' => [
+          '#markup' => '<strong>' . $this->t('Tab Terms') . '</strong><div class="mt-2">' . Xss::filterAdmin($terms_message) . '</div>',
+        ],
+      ];
+      $form['accept_terms'] = [
+        '#type' => 'checkbox',
+        '#title' => $this->t('I agree to the tab terms'),
+        '#required' => TRUE,
+      ];
+    }
+
+    // Actions.
+    if ($eligible && $this->currentUser->hasPermission('use store tab')) {
       $form['actions']['add_to_tab'] = [
         '#type' => 'submit',
         '#value' => Markup::create('<i class="fas fa-plus-circle me-2"></i>' . $this->t('Add to My Tab')),
@@ -153,6 +183,27 @@ class AddToTabForm extends FormBase {
         $form['actions']['add_to_tab']['#disabled'] = TRUE;
       }
     }
+    
+    // Fallback Options (show when tab isn't available or is blocked).
+    if (!$eligible || $limit_status['blocked']) {
+       $form['actions']['buy_now'] = [
+        '#type' => 'submit',
+        '#value' => Markup::create('<i class="far fa-credit-card me-2"></i>' . $this->t('Buy Now')),
+        '#submit' => ['::submitForm'], // Default buy now handler
+        '#attributes' => [
+          'class' => ['btn', 'btn-lg', 'btn-outline-primary', 'w-100', 'py-2'],
+        ],
+      ];
+
+      $form['actions']['add_to_cart'] = [
+        '#type' => 'submit',
+        '#value' => Markup::create('<i class="fab fa-paypal me-2"></i>' . $this->t('Add to Cart')),
+        '#submit' => ['::submitAddToCart'],
+        '#attributes' => [
+          'class' => ['btn', 'btn-lg', 'btn-outline-secondary', 'w-100', 'py-2'],
+        ],
+      ];
+    }
 
     return $form;
   }
@@ -168,6 +219,17 @@ class AddToTabForm extends FormBase {
     $url = $this->paymentService->getBuyNowUrl($material, $qty);
     $form_state->setResponse(new \Drupal\Core\Routing\TrustedRedirectResponse($url));
   }
+  
+  /**
+   * Submit handler for "Add to Cart".
+   */
+  public function submitAddToCart(array &$form, FormStateInterface $form_state) {
+    $material = $form_state->get('material');
+    $qty = (float) $form_state->getValue('quantity');
+    
+    $url = $this->paymentService->getAddToCartUrl($material, $qty);
+    $form_state->setResponse(new \Drupal\Core\Routing\TrustedRedirectResponse($url));
+  }
 
   /**
    * Submit handler for "Add to Tab".
@@ -178,7 +240,33 @@ class AddToTabForm extends FormBase {
     $unit_cost = $this->getMaterialUnitCost($material);
     $pending_total = $unit_cost * $qty;
 
-    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total);
+    $user = $this->entityTypeManager->getStorage('user')->load($this->currentUser->id());
+    $config = $this->config('makerspace_material_store.settings');
+    $require_terms = (bool) $config->get('require_terms_acceptance');
+    $terms_accepted = $user && $user->hasField('field_store_tab_terms_accepted') && (bool) $user->get('field_store_tab_terms_accepted')->value;
+    if ($require_terms && !$terms_accepted) {
+      if (!$form_state->getValue('accept_terms')) {
+        $message = $this->t('You must accept the tab terms to continue.');
+        $this->messenger()->addError($message);
+        $form_state->setErrorByName('accept_terms', $message);
+        return;
+      }
+
+      if ($user) {
+        if ($user->hasField('field_store_tab_terms_accepted')) {
+          $user->set('field_store_tab_terms_accepted', 1);
+        }
+        if ($user->hasField('field_store_tab_terms_accepted_at')) {
+          $user->set('field_store_tab_terms_accepted_at', \Drupal::time()->getRequestTime());
+        }
+        if ($user->hasField('field_store_tab_autocharge')) {
+          $user->set('field_store_tab_autocharge', 1);
+        }
+        $user->save();
+      }
+    }
+
+    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total, ['skip_terms' => TRUE]);
     if ($limit_status['blocked']) {
       $message = $this->t('Cannot add to tab: @reason', ['@reason' => $limit_status['reason']]);
       $this->messenger()->addError($message);

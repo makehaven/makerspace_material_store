@@ -87,6 +87,44 @@ class StoreSettingsForm extends ConfigFormBase {
       '#default_value' => $default_days,
     ];
 
+    $form['stripe_tab'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Stripe Tab Settings'),
+      '#open' => TRUE,
+    ];
+
+    $form['stripe_tab']['require_stripe_for_tab'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Require a Stripe account to use tabs'),
+      '#default_value' => (bool) $config->get('require_stripe_for_tab'),
+      '#description' => $this->t('If enabled, users without a Stripe customer ID cannot add to their tab (PayPal checkout remains available).'),
+    ];
+
+    $form['stripe_tab']['require_terms_acceptance'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Require terms acceptance before using a tab'),
+      '#default_value' => $config->get('require_terms_acceptance') === NULL ? TRUE : (bool) $config->get('require_terms_acceptance'),
+    ];
+
+    $form['stripe_tab']['store_tab_terms_message'] = [
+      '#type' => 'textarea',
+      '#title' => $this->t('Tab Terms Message'),
+      '#default_value' => $config->get('store_tab_terms_message') ?: $this->t('I agree that my account will be charged automatically periodically for items in my tab.'),
+      '#description' => $this->t('Shown the first time someone tries to use a tab.'),
+      '#states' => [
+        'visible' => [
+          ':input[name="require_terms_acceptance"]' => ['checked' => TRUE],
+        ],
+      ],
+    ];
+
+    $form['stripe_tab']['stripe_webhook_secret'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Stripe Webhook Secret'),
+      '#default_value' => $config->get('stripe_webhook_secret'),
+      '#description' => $this->t('Signing secret for the store tab webhook endpoint.'),
+    ];
+
     $form['ux'] = [
       '#type' => 'details',
       '#title' => $this->t('User Experience'),
@@ -133,6 +171,10 @@ class StoreSettingsForm extends ConfigFormBase {
       ->set('notify_url', $form_state->getValue('notify_url'))
       ->set('max_tab_amount', $form_state->getValue('max_tab_amount'))
       ->set('max_tab_days', $form_state->getValue('max_tab_days'))
+      ->set('require_stripe_for_tab', (bool) $form_state->getValue('require_stripe_for_tab'))
+      ->set('require_terms_acceptance', (bool) $form_state->getValue('require_terms_acceptance'))
+      ->set('store_tab_terms_message', $form_state->getValue('store_tab_terms_message'))
+      ->set('stripe_webhook_secret', $form_state->getValue('stripe_webhook_secret'))
       ->set('post_add_redirect', $form_state->getValue('post_add_redirect'))
       ->set('api_key', $form_state->getValue('api_key'))
       ->save();

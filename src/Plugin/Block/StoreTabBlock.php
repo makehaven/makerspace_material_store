@@ -162,9 +162,44 @@ class StoreTabBlock extends BlockBase implements ContainerFactoryPluginInterface
       ];
 
       if ($this->currentUser->isAuthenticated()) {
-        $tab_status = $this->tabLimitService->getStatus($this->currentUser);
+        $tab_status = $this->tabLimitService->getStatus($this->currentUser, 0.0, ['skip_terms' => TRUE]);
+        $config = \Drupal::config('makerspace_material_store.settings');
+        $require_terms = (bool) $config->get('require_terms_acceptance');
+        $user = $this->entityTypeManager->getStorage('user')->load($this->currentUser->id());
+        $terms_accepted = $user && $user->hasField('field_store_tab_terms_accepted') && (bool) $user->get('field_store_tab_terms_accepted')->value;
+
+        if ($this->currentUser->hasPermission('use store tab') && $tab_status['eligible'] && !$tab_status['blocked'] && $require_terms && !$terms_accepted) {
+          $build['actions']['terms_notice'] = [
+            '#type' => 'container',
+            '#attributes' => ['class' => ['alert', 'alert-info', 'small', 'mb-2']],
+            'message' => [
+              '#markup' => '<strong>' . $this->t('Set Up a Tab') . '</strong><p class="mb-1">' . $this->t('Sign up to have a tab paid on a schedule. Open “Add to Tab” to review and accept the terms.') . '</p>',
+            ],
+          ];
+        }
         
-        if ($tab_status['blocked']) {
+        // CASE 1: NOT ELIGIBLE (No Stripe Account, etc.)
+        if (isset($tab_status['eligible']) && !$tab_status['eligible']) {
+          $build['actions']['buy_now'] = [
+            '#type' => 'link',
+            '#title' => Markup::create('<i class="far fa-credit-card me-2"></i>' . $this->t('Buy Now')),
+            '#url' => Url::fromRoute('makerspace_material_store.buy_now', ['material' => $current_material->id()]),
+            '#attributes' => [
+              'class' => ['btn', 'btn-lg', 'btn-outline-primary', 'w-100', 'py-2'],
+            ],
+          ];
+
+          $build['actions']['add_to_cart'] = [
+            '#type' => 'link',
+            '#title' => Markup::create('<i class="fab fa-paypal me-2"></i>' . $this->t('Add to Cart')),
+            '#url' => Url::fromRoute('makerspace_material_store.add_to_cart', ['material' => $current_material->id()]),
+            '#attributes' => [
+              'class' => ['btn', 'btn-lg', 'btn-outline-secondary', 'w-100', 'py-2'],
+            ],
+          ];
+        }
+        // CASE 2: ELIGIBLE BUT BLOCKED (Limit reached)
+        elseif ($tab_status['blocked']) {
           $build['actions']['blocked_notice'] = [
             '#type' => 'container',
             '#attributes' => ['class' => ['alert', 'alert-warning', 'small', 'mb-2']],
@@ -191,6 +226,7 @@ class StoreTabBlock extends BlockBase implements ContainerFactoryPluginInterface
             ],
           ];
         }
+        // CASE 3: ELIGIBLE AND ACTIVE
         else {
           // Standard Actions.
           
@@ -204,7 +240,7 @@ class StoreTabBlock extends BlockBase implements ContainerFactoryPluginInterface
             ],
           ];
 
-          // 2. Add to Tab (Primary) OR Add to Cart (Fallback).
+          // 2. Add to Tab.
           if ($this->currentUser->hasPermission('use store tab')) {
             $build['actions']['add_to_tab'] = [
               '#type' => 'link',
@@ -218,8 +254,9 @@ class StoreTabBlock extends BlockBase implements ContainerFactoryPluginInterface
             ];
           }
           else {
-            // Fallback: Add to Cart (PayPal).
-            $build['actions']['add_to_cart'] = [
+            // Fallback for permissions issue (though usually covered by 'eligible' logic if permissions were checked there).
+            // But if they have Stripe but NO permission, fallback to Cart.
+             $build['actions']['add_to_cart'] = [
               '#type' => 'link',
               '#title' => Markup::create('<i class="fab fa-paypal me-2"></i>' . $this->t('Add to Cart')),
               '#url' => Url::fromRoute('makerspace_material_store.add_to_cart', ['material' => $current_material->id()]),
@@ -250,7 +287,11 @@ class StoreTabBlock extends BlockBase implements ContainerFactoryPluginInterface
     }
 
     // 2. Current Tab Summary.
-    if ($this->currentUser->hasPermission('use store tab')) {
+    $tab_status = $this->currentUser->isAuthenticated()
+      ? $this->tabLimitService->getStatus($this->currentUser, 0.0, ['skip_terms' => TRUE])
+      : ['eligible' => FALSE];
+
+    if ($this->currentUser->hasPermission('use store tab') && !empty($tab_status['eligible'])) {
        try {
          if ($this->entityTypeManager->hasDefinition('material_transaction')) {
            $storage = $this->entityTypeManager->getStorage('material_transaction');

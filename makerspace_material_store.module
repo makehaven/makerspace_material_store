@@ -9,6 +9,16 @@ use Drupal\Core\Entity\EntityInterface;
 use Drupal\eck\EckEntityInterface;
 
 /**
+ * Implements hook_cron().
+ */
+function makerspace_material_store_cron() {
+  // Run auto-charger.
+  /** @var \Drupal\makerspace_material_store\Service\StoreAutoCharger $charger */
+  $charger = \Drupal::service('makerspace_material_store.auto_charger');
+  $charger->processAutoCharges();
+}
+
+/**
  * Implements hook_entity_insert().
  * 
  * Reconciles pending material_transactions when an inventory_adjustment is created from a sale.

@@ -4,4 +4,7 @@ services:
     arguments: ['@config.factory']
   makerspace_material_store.tab_limit:
     class: Drupal\makerspace_material_store\Service\TabLimitService
-    arguments: ['@entity_type.manager', '@config.factory', '@string_translation']
+    arguments: ['@entity_type.manager', '@config.factory', '@string_translation', '@?mh_stripe.helper']
+  makerspace_material_store.auto_charger:
+    class: Drupal\makerspace_material_store\Service\StoreAutoCharger
+    arguments: ['@entity_type.manager', '@config.factory', '@logger.factory', '@?mh_stripe.helper']

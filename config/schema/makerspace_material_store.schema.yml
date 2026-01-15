@@ -1,0 +1,40 @@
+makerspace_material_store.settings:
+  type: config_object
+  label: 'Makerspace Material Store settings'
+  mapping:
+    paypal_business_id:
+      type: string
+      label: 'PayPal business ID/email'
+    return_url:
+      type: string
+      label: 'PayPal return URL'
+    cancel_url:
+      type: string
+      label: 'PayPal cancel URL'
+    notify_url:
+      type: string
+      label: 'PayPal IPN notify URL'
+    max_tab_amount:
+      type: float
+      label: 'Maximum tab amount'
+    max_tab_days:
+      type: integer
+      label: 'Maximum tab age (days)'
+    post_add_redirect:
+      type: string
+      label: 'Post add redirect'
+    api_key:
+      type: string
+      label: 'Store API key'
+    require_stripe_for_tab:
+      type: boolean
+      label: 'Require Stripe account for tab usage'
+    require_terms_acceptance:
+      type: boolean
+      label: 'Require terms acceptance before using a tab'
+    store_tab_terms_message:
+      type: text
+      label: 'Tab terms message'
+    stripe_webhook_secret:
+      type: string
+      label: 'Stripe webhook secret'

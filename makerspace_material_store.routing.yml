@@ -121,3 +121,19 @@ makerspace_material_store.add_to_cart:
     parameters:
       material:
         type: entity:node
+
+makerspace_material_store.stripe_webhook:
+  path: '/store/stripe/webhook'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StripeWebhookController::handle'
+  methods: [POST]
+  requirements:
+    _access: 'TRUE'
+
+makerspace_material_store.stripe_invoice_report:
+  path: '/admin/reports/store/stripe-invoices'
+  defaults:
+    _controller: '\Drupal\makerspace_material_store\Controller\StoreStripeInvoiceReportController::report'
+    _title: 'Store Stripe Invoices'
+  requirements:
+    _permission: 'administer store transactions'

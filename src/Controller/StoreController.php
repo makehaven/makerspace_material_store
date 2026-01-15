@@ -216,6 +216,17 @@ class StoreController extends ControllerBase {
       return $this->redirect('<front>');
     }
 
+    $config = $this->config('makerspace_material_store.settings');
+    $require_terms = (bool) $config->get('require_terms_acceptance');
+    if ($require_terms) {
+      $user = $this->entityTypeManager->getStorage('user')->load($this->currentUser->id());
+      $terms_accepted = $user && $user->hasField('field_store_tab_terms_accepted') && (bool) $user->get('field_store_tab_terms_accepted')->value;
+      if (!$terms_accepted) {
+        $this->messenger()->addWarning($this->t('Please review and accept the tab terms before adding items.'));
+        return $this->redirect('makerspace_material_store.checkout_item_page', ['material' => $material->id()]);
+      }
+    }
+
     $qty = $request->query->get('qty');
     
     // If quantity is missing, redirect to the confirmation/quantity form.
@@ -229,7 +240,7 @@ class StoreController extends ControllerBase {
 
     $unit_cost = $this->getMaterialUnitCost($material);
     $pending_total = $unit_cost * (float) $qty;
-    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total);
+    $limit_status = $this->tabLimitService->getStatus($this->currentUser, $pending_total, ['skip_terms' => TRUE]);
     if ($limit_status['blocked']) {
       $this->messenger()->addError($this->t('Cannot add to tab: @reason', ['@reason' => $limit_status['reason']]));
       return $this->redirect('makerspace_material_store.view_tab');
@@ -271,7 +282,6 @@ class StoreController extends ControllerBase {
     }
 
     // Redirect based on configuration.
-    $config = \Drupal::config('makerspace_material_store.settings');
     $redirect_option = $config->get('post_add_redirect') ?: 'store';
     
     if ($redirect_option === 'cart') {
