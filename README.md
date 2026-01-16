@@ -80,7 +80,7 @@ This module supports automatic charging of user tabs via Stripe. It uses **Strip
     *   `field_store_tab_autocharge` (Boolean)
     *   `field_store_tab_blocked` (Boolean)
     *   `field_store_tab_terms_accepted` (Boolean)
-    *   `field_store_tab_terms_accepted_at` (Timestamp)
+    *   `field_store_terms_accepted_at` (Timestamp)
 
 ### Auto-Charge Logic (Intended Behavior)
 1.  **Trigger:** Runs on Drupal Cron **but exits unless today is the last day of the month** (site timezone).

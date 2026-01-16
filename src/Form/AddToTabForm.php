@@ -256,8 +256,8 @@ class AddToTabForm extends FormBase {
         if ($user->hasField('field_store_tab_terms_accepted')) {
           $user->set('field_store_tab_terms_accepted', 1);
         }
-        if ($user->hasField('field_store_tab_terms_accepted_at')) {
-          $user->set('field_store_tab_terms_accepted_at', \Drupal::time()->getRequestTime());
+        if ($user->hasField('field_store_terms_accepted_at')) {
+          $user->set('field_store_terms_accepted_at', \Drupal::time()->getRequestTime());
         }
         if ($user->hasField('field_store_tab_autocharge')) {
           $user->set('field_store_tab_autocharge', 1);
