@@ -59,7 +59,7 @@ function makerspace_material_store_update_9002() {
       ],
       'default_value' => [['value' => 0]],
     ],
-    'field_store_tab_terms_accepted_at' => [
+    'field_store_terms_accepted_at' => [
       'type' => 'timestamp',
       'label' => 'Store tab terms accepted at',
     ],
